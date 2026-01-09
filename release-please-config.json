@@ -1,0 +1,9 @@
+{
+  "packages": {
+    ".": {
+      "release-type": "node",
+      "package-name": "wxt-react-starter",
+      "changelog-path": "CHANGELOG.md"
+    }
+  }
+}
