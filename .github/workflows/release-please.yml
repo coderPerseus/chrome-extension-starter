@@ -15,6 +15,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - uses: actions/checkout@v4
+        if: ${{ steps.release.outputs.release_created }}
+
+      - uses: pnpm/action-setup@v4
+        if: ${{ steps.release.outputs.release_created }}
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        if: ${{ steps.release.outputs.release_created }}
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Build zips (chrome + edge)
+        if: ${{ steps.release.outputs.release_created }}
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm zip
+          pnpm zip:edge
+
+      - name: Upload release assets
+        if: ${{ steps.release.outputs.release_created }}
+        run: |
+          gh release upload "${{ steps.release.outputs.tag_name }}" .output/*.zip --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
