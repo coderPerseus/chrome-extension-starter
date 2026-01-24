@@ -6,6 +6,10 @@ on:
       - main
   workflow_dispatch:
 
+# 说明：
+# 1) Release Please 会扫描提交信息与变更文件，计算下一个语义化版本。
+# 2) 若需要发布，则创建/更新一个 Release PR，并自动维护 CHANGELOG.md。
+# 3) 当 Release PR 合并后，本工作流会创建 GitHub Release 并触发构建与上传产物。
 permissions:
   contents: write
   pull-requests: write
@@ -17,9 +21,14 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
+          config-file: .github/release-please-config.json
+          manifest-file: .github/release-please-manifest.json
+        # 重要输出：
+        # - release_created: 是否创建了正式 Release
+        # - tag_name: 版本标签（如 v1.2.3）
+        # - version: 版本号（如 1.2.3）
 
+      # 只有在 release_created=true 时才继续构建并上传产物。
       - uses: actions/checkout@v4
         if: ${{ steps.release.outputs.release_created }}
 
