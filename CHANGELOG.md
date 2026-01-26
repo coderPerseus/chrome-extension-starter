@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/coderPerseus/chrome-extension-starter/compare/wxt-react-starter-v1.2.0...wxt-react-starter-v1.3.0) (2026-01-26)
+
+
+### Features
+
+* add antd + tailwind ([9219532](https://github.com/coderPerseus/chrome-extension-starter/commit/92195326a0e24c711a2c420c950bb6baeef2f71d))
+
 ## [1.2.0](https://github.com/coderPerseus/chrome-extension-starter/compare/wxt-react-starter-v1.1.0...wxt-react-starter-v1.2.0) (2026-01-24)
 
 
