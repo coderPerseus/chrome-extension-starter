@@ -1,5 +1,3 @@
-import { marked } from "marked";
-import { injectScript } from "wxt/utils/inject-script";
 import {
   GUIDE_ACTIONS_ID,
   GUIDE_INJECTED_SCRIPT_PATH,
@@ -11,20 +9,22 @@ import {
   GUIDE_TOAST_DURATION_MS,
   GUIDE_TOAST_ID,
   GUIDE_TOAST_MESSAGE,
-} from "@/constants/onboarding";
-import readme from "../../../README.md?raw";
-import "./style.css";
+} from "@/constants/onboarding"
+import { marked } from "marked"
+import { injectScript } from "wxt/utils/inject-script"
+import readme from "../../../README.md?raw"
+import "./style.css"
 
-const root = document.getElementById("app");
+const root = document.getElementById("app")
 if (!root) {
-  throw new Error("Guide root element not found");
+  throw new Error("Guide root element not found")
 }
 
-const markdown = readme.trim();
-root.id = GUIDE_ROOT_ID;
-root.dataset.markdown = markdown;
+const markdown = readme.trim()
+root.id = GUIDE_ROOT_ID
+root.dataset.markdown = markdown
 
-const readmeHtml = marked.parse(markdown, { async: false });
+const readmeHtml = marked.parse(markdown, { async: false })
 root.innerHTML = `
   <div class="wxt-guide-panel" role="dialog" aria-label="新手引导页">
     <div class="wxt-guide-actions" id="${GUIDE_ACTIONS_ID}"></div>
@@ -39,39 +39,31 @@ root.innerHTML = `
       <div class="wxt-guide-markdown">${readmeHtml}</div>
     </section>
   </div>
-`;
+`
 
-const toast = document.getElementById(GUIDE_TOAST_ID);
-let toastTimer: number | undefined;
+const toast = document.getElementById(GUIDE_TOAST_ID)
+let toastTimer: number | undefined
 
 const showToast = (message: string) => {
-  if (!toast) return;
-  toast.textContent = message;
-  toast.classList.add("is-visible");
-  if (toastTimer) window.clearTimeout(toastTimer);
+  if (!toast) return
+  toast.textContent = message
+  toast.classList.add("is-visible")
+  if (toastTimer) window.clearTimeout(toastTimer)
   toastTimer = window.setTimeout(() => {
-    toast.classList.remove("is-visible");
-  }, GUIDE_TOAST_DURATION_MS);
-};
+    toast.classList.remove("is-visible")
+  }, GUIDE_TOAST_DURATION_MS)
+}
 
 window.addEventListener("message", (event) => {
-  if (event.source !== window) return;
+  if (event.source !== window) return
   const data = event.data as {
-    source?: string;
-    type?: string;
-    markdown?: string;
-  } | null;
-  if (
-    !data ||
-    data.source !== GUIDE_MESSAGE_SOURCE ||
-    data.type !== GUIDE_MESSAGE_TYPE
-  )
-    return;
-  console.log(
-    "[WXT Guide] Markdown from injected script:",
-    data.markdown ?? "",
-  );
-  showToast(GUIDE_TOAST_MESSAGE);
-});
+    source?: string
+    type?: string
+    markdown?: string
+  } | null
+  if (!data || data.source !== GUIDE_MESSAGE_SOURCE || data.type !== GUIDE_MESSAGE_TYPE) return
+  console.log("[WXT Guide] Markdown from injected script:", data.markdown ?? "")
+  showToast(GUIDE_TOAST_MESSAGE)
+})
 
-await injectScript(GUIDE_INJECTED_SCRIPT_PATH, { keepInDom: true });
+await injectScript(GUIDE_INJECTED_SCRIPT_PATH, { keepInDom: true })

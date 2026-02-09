@@ -1,81 +1,33 @@
-# WXT + React 浏览器扩展模板
+# light-reader
 
-本项目是基于 WXT + React 的浏览器扩展启动模板，内置 oRPC 消息通信示例，适合快速搭建 Chrome / Edge / Firefox 扩展的开发环境与基础结构。
+`light-reader` 是一个基于 `WXT + React + TypeScript` 的浏览器扩展，用于把网页强制转换到更易读的明亮模式。
 
-## 主要特性
+## 功能
 
-- WXT 驱动的扩展工程结构与构建流程
-- React + React Query 的 Popup 示例
-- Background / Content / Popup 之间的 oRPC 消息通信
-- 计数器状态持久化到 `browser.storage.local`（MV3 兼容）
-- 一键打包 Chrome / Edge / Firefox 的 zip 包
+- Popup 一键开关明亮模式
+- 内置 6 套阅读配色（参考 tweakcn 风格）
+- 点击配色后，当前标签页立即应用
+- 配置持久化到 `browser.storage.local`
+- 内容脚本在 `document_start` 注入，支持 `Shadow DOM` 新增节点追踪
 
-## 技术栈
+## 实现思路（参考 Dark Reader）
 
-- 构建与扩展框架：WXT
-- 前端框架：React
-- 数据请求与缓存：@tanstack/react-query
-- 消息通信：oRPC
-- 语言与工具链：TypeScript + Biome
+- 通过内容脚本动态注入 `<style>`，统一覆盖页面背景/文本/边框/链接/表单色彩
+- 使用 CSS 变量承载配色方案，切换时仅更新变量和样式块
+- 监听 `storage.onChanged` 和 runtime message，支持实时更新
+- 使用 `MutationObserver` 跟踪 DOM 与 Shadow Root 变化，提升动态页面兼容性
 
-## 快速开始
-
-建议使用 pnpm：
+## 本地开发
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-## 常用命令
+## 构建与检查
 
 ```bash
-# 开发
-pnpm dev
-pnpm dev:firefox
-
-# 构建
-pnpm build
-pnpm build:firefox
-
-# 打包
-pnpm zip
-pnpm zip:edge
-pnpm zip:firefox
-
-# 质量检查
-pnpm lint
-pnpm format
 pnpm check
-pnpm compile
-```
-
-## CI 流程介绍
-
-本项目使用 GitHub Actions 搭配 Release Please 自动化发布：
-
-- 主分支提交后触发 `release-please` 工作流
-- 自动生成/更新 Release PR 与变更日志
-- 当 Release PR 合并后自动创建 GitHub Release
-- 自动构建并上传 Chrome / Edge 的 zip 包到 Release 资产
-
-## Commit Message 与版本规则
-
-Release Please 采用 Conventional Commits 解析提交信息并决定版本号：
-
-- **大版本（Major）**：包含破坏性变更  
-  使用 `feat!:` / `fix!:` 或在正文中添加 `BREAKING CHANGE: ...`
-- **中版本（Minor）**：新增功能  
-  使用 `feat: ...`
-- **小版本（Patch）**：修复问题或小改动  
-  使用 `fix: ...`，`perf: ...`，`refactor: ...`，`chore: ...` 等
-
-常见示例：
-
-```text
-feat: add quick toggle in popup
-fix: handle null storage value
-feat!: migrate settings schema
-
-BREAKING CHANGE: settings schema v2 requires migration
+pnpm build
+pnpm zip
 ```

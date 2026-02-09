@@ -1,14 +1,13 @@
-import {
-  LIGHT_READER_UPDATE_MESSAGE,
-  isLightReaderUpdateMessage,
-} from "@/shared/light-reader/messages"
+import { isLightReaderUpdateMessage } from "@/shared/light-reader/messages"
 import { getLightReaderPalette } from "@/shared/light-reader/palettes"
 import {
   DEFAULT_LIGHT_READER_SETTINGS,
-  LIGHT_READER_SETTINGS_KEY,
-  loadLightReaderSettings,
-  normalizeLightReaderSettings,
+  LIGHT_READER_DOMAIN_SETTINGS_KEY,
   type LightReaderSettings,
+  getLightReaderSettingsByDomain,
+  loadLightReaderSettingsForDomain,
+  normalizeDomain,
+  normalizeLightReaderSettings,
 } from "@/shared/light-reader/settings"
 
 const DOCUMENT_STYLE_ID = "light-reader-document-style"
@@ -20,6 +19,7 @@ const trackedShadowRoots = new Set<ShadowRoot>()
 const shadowObservers = new Map<ShadowRoot, MutationObserver>()
 let pageObserver: MutationObserver | null = null
 let activeSettings: LightReaderSettings = DEFAULT_LIGHT_READER_SETTINGS
+const currentDomain = normalizeDomain(globalThis.location.hostname || "")
 
 const getDocumentCss = (settings: LightReaderSettings) => {
   const palette = getLightReaderPalette(settings.paletteId)
@@ -144,7 +144,7 @@ html[${ROOT_MODE_ATTR}="on"] :where(hr, table, th, td) {
   border-color: var(--lr-border) !important;
 }
 
-html[${ROOT_MODE_ATTR}="on"] :where(::placeholder) {
+html[${ROOT_MODE_ATTR}="on"] ::placeholder {
   color: var(--lr-muted) !important;
 }
 `
@@ -254,9 +254,9 @@ const trackShadowRoot = (shadowRoot: ShadowRoot) => {
 
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
-      mutation.addedNodes.forEach((node) => {
+      for (const node of mutation.addedNodes) {
         collectShadowRoots(node)
-      })
+      }
     }
   })
 
@@ -287,9 +287,9 @@ const startPageObserver = () => {
 
   pageObserver = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
-      mutation.addedNodes.forEach((node) => {
+      for (const node of mutation.addedNodes) {
         collectShadowRoots(node)
-      })
+      }
     }
   })
 
@@ -306,32 +306,45 @@ const applyLightReaderSettings = (settings: LightReaderSettings) => {
     document.documentElement.removeAttribute(ROOT_MODE_ATTR)
     document.documentElement.removeAttribute(ROOT_PALETTE_ATTR)
     removeDocumentStyle()
-    trackedShadowRoots.forEach((shadowRoot) => clearShadowRootStyle(shadowRoot))
+
+    for (const shadowRoot of trackedShadowRoots) {
+      clearShadowRootStyle(shadowRoot)
+    }
+    pageObserver?.disconnect()
+    pageObserver = null
+    for (const observer of shadowObservers.values()) {
+      observer.disconnect()
+    }
+    shadowObservers.clear()
+    trackedShadowRoots.clear()
     return
   }
 
+  startPageObserver()
   document.documentElement.setAttribute(ROOT_MODE_ATTR, "on")
   document.documentElement.setAttribute(ROOT_PALETTE_ATTR, settings.paletteId)
   ensureDocumentStyle(settings)
   collectShadowRoots(document.documentElement)
-  trackedShadowRoots.forEach((shadowRoot) => ensureShadowRootStyle(shadowRoot))
+  for (const shadowRoot of trackedShadowRoots) {
+    ensureShadowRootStyle(shadowRoot)
+  }
 }
 
 const handleMessage = (message: unknown) => {
   if (!isLightReaderUpdateMessage(message)) return
-  const nextSettings = normalizeLightReaderSettings(message.settings)
-  applyLightReaderSettings(nextSettings)
+  if (!currentDomain || normalizeDomain(message.domain) !== currentDomain) return
+  applyLightReaderSettings(normalizeLightReaderSettings(message.settings))
 }
 
 const handleStorageChanged = (
   changes: Record<string, browser.storage.StorageChange>,
-  areaName: string,
+  areaName: string
 ) => {
   if (areaName !== "local") return
-  const changedSettings = changes[LIGHT_READER_SETTINGS_KEY]
-  if (!changedSettings) return
+  const changedSettings = changes[LIGHT_READER_DOMAIN_SETTINGS_KEY]
+  if (!changedSettings || !currentDomain) return
 
-  const nextSettings = normalizeLightReaderSettings(changedSettings.newValue)
+  const nextSettings = getLightReaderSettingsByDomain(changedSettings.newValue, currentDomain)
   applyLightReaderSettings(nextSettings)
 }
 
@@ -340,12 +353,15 @@ export default defineContentScript({
   runAt: "document_start",
   allFrames: true,
   async main() {
-    startPageObserver()
-    collectShadowRoots(document.documentElement)
     browser.runtime.onMessage.addListener(handleMessage)
     browser.storage.onChanged.addListener(handleStorageChanged)
 
-    const settings = await loadLightReaderSettings()
+    if (!currentDomain) {
+      applyLightReaderSettings(DEFAULT_LIGHT_READER_SETTINGS)
+      return
+    }
+
+    const settings = await loadLightReaderSettingsForDomain(currentDomain)
     applyLightReaderSettings(settings)
   },
 })

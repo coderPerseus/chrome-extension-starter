@@ -1,4 +1,4 @@
-import { defineConfig } from "wxt";
+import { defineConfig } from "wxt"
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
@@ -12,11 +12,7 @@ export default defineConfig({
   //   },
   // },
   srcDir: "src",
-  modules: [
-    "@wxt-dev/module-react",
-    "@wxt-dev/auto-icons",
-    "@wxt-dev/i18n/module",
-  ],
+  modules: ["@wxt-dev/module-react", "@wxt-dev/auto-icons", "@wxt-dev/i18n/module"],
   autoIcons: {
     baseIconPath: "assets/logo.png",
     developmentIndicator: false,
@@ -27,4 +23,4 @@ export default defineConfig({
     default_locale: "en",
     permissions: ["storage", "tabs"],
   },
-});
+})

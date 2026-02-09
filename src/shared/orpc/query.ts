@@ -1,15 +1,15 @@
-import { createTanstackQueryUtils } from "@orpc/tanstack-query";
-import { createExtensionClient } from "@/shared/orpc/extension";
+import { createExtensionClient } from "@/shared/orpc/extension"
+import { createTanstackQueryUtils } from "@orpc/tanstack-query"
 
-const createUtils = () => createTanstackQueryUtils(createExtensionClient());
+const createUtils = () => createTanstackQueryUtils(createExtensionClient())
 
-type OrpcUtils = ReturnType<typeof createUtils>;
+type OrpcUtils = ReturnType<typeof createUtils>
 
-let cached: OrpcUtils | null = null;
+let cached: OrpcUtils | null = null
 /** 自动处理缓存、去重、重试、loading/error 状态、失效刷新 */
 export const getOrpc = () => {
   if (!cached) {
-    cached = createUtils();
+    cached = createUtils()
   }
-  return cached;
-};
+  return cached
+}
