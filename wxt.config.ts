@@ -25,12 +25,6 @@ export default defineConfig({
     name: "__MSG_appName__",
     description: "__MSG_appDescription__",
     default_locale: "en",
-    permissions: ["storage"],
-    web_accessible_resources: [
-      {
-        resources: ["onboarding-injected.js"],
-        matches: ["*://*/*"],
-      },
-    ],
+    permissions: ["storage", "tabs"],
   },
 });

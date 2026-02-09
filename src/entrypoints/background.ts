@@ -1,31 +1,21 @@
-import { RPCHandler } from "@orpc/server/message-port";
-import { GUIDE_PAGE_PATH } from "@/constants/onboarding";
-import { ORPC_PORT_NAME } from "@/shared/orpc/constants";
-import { router } from "@/shared/orpc/router";
-
-const handler = new RPCHandler(router);
+import {
+  DEFAULT_LIGHT_READER_SETTINGS,
+  LIGHT_READER_SETTINGS_KEY,
+  normalizeLightReaderSettings,
+} from "@/shared/light-reader/settings"
 
 export default defineBackground(() => {
-  browser.runtime.onConnect.addListener((port) => {
-    if (port.name !== ORPC_PORT_NAME) return;
-    if (port.sender?.id !== browser.runtime.id) {
-      console.warn("[oRPC] rejected port", {
-        name: port.name,
-        sender: port.sender,
-      });
-      port.disconnect();
-      return;
+  browser.runtime.onInstalled.addListener(async () => {
+    const stored = await browser.storage.local.get(LIGHT_READER_SETTINGS_KEY)
+    const normalized = normalizeLightReaderSettings(stored[LIGHT_READER_SETTINGS_KEY])
+
+    if (stored[LIGHT_READER_SETTINGS_KEY]) {
+      await browser.storage.local.set({ [LIGHT_READER_SETTINGS_KEY]: normalized })
+      return
     }
-    handler.upgrade(port);
-  });
 
-  browser.runtime.onInstalled.addListener((details) => {
-    if (details.reason !== "install") return;
-    const url = browser.runtime.getURL(GUIDE_PAGE_PATH);
-    browser.tabs.create({ url }).catch((error) => {
-      console.warn("[Guide] failed to open welcome page", error);
-    });
-  });
-
-  console.log("oRPC background ready", { id: browser.runtime.id });
-});
+    await browser.storage.local.set({
+      [LIGHT_READER_SETTINGS_KEY]: DEFAULT_LIGHT_READER_SETTINGS,
+    })
+  })
+})

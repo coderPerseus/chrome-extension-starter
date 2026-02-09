@@ -1,2 +1,2 @@
-appName: chrome-extension-starter
-appDescription: 使用 oRPC + React Query 进行通信。
+appName: light-reader
+appDescription: 为任意网页强制应用明亮模式，并支持多套阅读配色方案。
