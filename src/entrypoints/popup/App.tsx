@@ -58,6 +58,7 @@ const getPopupText = (uiLocale: UiLocale) => {
       loadFailed: "Failed to load settings",
       unsupportedDomain: "This page cannot be controlled by the extension.",
       noDomain: "No domain",
+      learnLabel: "Learn why light mode helps",
     }
   }
 
@@ -70,6 +71,7 @@ const getPopupText = (uiLocale: UiLocale) => {
     loadFailed: "读取配置失败",
     unsupportedDomain: "当前页面不支持扩展控制。",
     noDomain: "无域名",
+    learnLabel: "了解浅色模式科普",
   }
 }
 
@@ -121,7 +123,10 @@ const PALETTE_DESCRIPTIONS: Record<string, { zh: string; en: string }> = {
 }
 
 const sendSettingsToActiveTab = async (domain: string, settings: LightReaderSettings) => {
-  const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true })
+  const [activeTab] = await browser.tabs.query({
+    active: true,
+    currentWindow: true,
+  })
   if (!activeTab?.id) return
 
   const message: LightReaderUpdateMessage = {
@@ -224,10 +229,28 @@ function App() {
     }
   }
 
+  const openLearnPage = async () => {
+    const url = browser.runtime.getURL(`/learn.html?lang=${uiLocale}`)
+    await browser.tabs.create({ url })
+  }
+
   return (
     <div className="popup-shell">
       <header className="popup-header">
-        <h1 className="brand-title">{appName}</h1>
+        <div className="title-wrap">
+          <h1 className="brand-title">{appName}</h1>
+          <button
+            type="button"
+            className="help-link"
+            title={text.learnLabel}
+            aria-label={text.learnLabel}
+            onClick={() => {
+              void openLearnPage()
+            }}
+          >
+            ?
+          </button>
+        </div>
         <div className="header-actions">
           <button
             type="button"
@@ -264,7 +287,7 @@ function App() {
       <section className="palette-panel">
         <div className="palette-header">
           <span>{text.palettes}</span>
-          <span className="domain-label">{activeDomain ?? text.noDomain}</span>
+          {/* <span className="domain-label">{activeDomain ?? text.noDomain}</span> */}
         </div>
         <div className="palette-grid">
           {LIGHT_READER_PALETTES.map((palette) => {

@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --bg: #f5f5f6;
+  --surface: #ffffff;
+  --text: #141416;
+  --muted: #64646b;
+  --line: #e4e4e8;
+  --font-sans: "Avenir Next", "Avenir", "Segoe UI", "PingFang SC", sans-serif;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+  }
+}
+
+.learn-shell {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 32px 20px 56px;
+}
+
+.learn-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.learn-header h1 {
+  margin: 0;
+  font-size: 30px;
+  letter-spacing: 0.01em;
+  line-height: 1.25;
+}
+
+.lang-toggle {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.subtitle {
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+  max-width: 760px;
+}
+
+.sections {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.card {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.card h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.card ul,
+.card ol {
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.card li {
+  margin-bottom: 8px;
+  line-height: 1.6;
+}
+
+.card a {
+  color: #2f5cbd;
+  text-decoration: none;
+}
+
+.card a:hover {
+  text-decoration: underline;
+}
+
+.refs li {
+  font-size: 14px;
+}
+
+@media (max-width: 680px) {
+  .learn-shell {
+    padding: 20px 12px 32px;
+  }
+
+  .learn-header h1 {
+    font-size: 24px;
+  }
+}
