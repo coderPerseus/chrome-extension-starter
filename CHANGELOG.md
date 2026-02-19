@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/coderPerseus/chrome-extension-starter/compare/wxt-react-starter-v1.3.0...wxt-react-starter-v1.4.0) (2026-02-09)
+
+
+### Features
+
+* light reader ([0333e2c](https://github.com/coderPerseus/chrome-extension-starter/commit/0333e2c181003443e821639a60693fe17871af69))
+* 核心能力开发 ([87265eb](https://github.com/coderPerseus/chrome-extension-starter/commit/87265ebc1e4eadc1d8846b010cb19023348d3687))
+
 ## [1.3.0](https://github.com/coderPerseus/chrome-extension-starter/compare/wxt-react-starter-v1.2.0...wxt-react-starter-v1.3.0) (2026-01-26)
 
 
