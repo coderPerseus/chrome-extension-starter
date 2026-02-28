@@ -1,6 +1,6 @@
 {
-  "name": "wxt-react-starter",
-  "description": "manifest.json description",
+  "name": "enhance-ai-chat",
+  "description": "Enhance AI Chat browser extension",
   "private": true,
   "version": "1.3.0",
   "type": "module",

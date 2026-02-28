@@ -1,6 +1,6 @@
-# WXT + React 浏览器扩展模板
+# Enhance AI Chat（增强 AI 聊天）
 
-本项目是基于 WXT + React 的浏览器扩展启动模板，内置 oRPC 消息通信示例，适合快速搭建 Chrome / Edge / Firefox 扩展的开发环境与基础结构。
+本项目是基于 WXT + React 的浏览器扩展项目，用于构建 Enhance AI Chat（增强 AI 聊天）插件，适合在此基础上继续开发 Chrome / Edge / Firefox 扩展能力。
 
 ## 主要特性
 
