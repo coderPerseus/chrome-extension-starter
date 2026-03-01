@@ -1,5 +1,11 @@
 import watermarkBg48Url from "@/assets/gemini-watermark-bg-48.png"
 import watermarkBg96Url from "@/assets/gemini-watermark-bg-96.png"
+import {
+  GEMINI_POPUP_ACTIONS,
+  GEMINI_POPUP_ACTION_MESSAGE,
+  type GeminiPopupActionResponse,
+  isGeminiPopupActionMessage,
+} from "@/shared/messages/gemini-actions"
 
 type ChatRole = "user" | "assistant"
 
@@ -7,6 +13,17 @@ type ChatMessage = {
   role: ChatRole
   text: string
   markdown: string
+}
+
+type DownloadImageItem = {
+  url: string
+  filename: string
+}
+
+type DownloadImagesResponse = {
+  ok: boolean
+  downloaded: number
+  errors: string[]
 }
 
 type FetchImageBlobResponse =
@@ -38,14 +55,22 @@ type MarkdownRenderContext = {
   listDepth: number
 }
 
+type BatchDownloadResult = {
+  total: number
+  success: number
+  failed: number
+  lastErrorMessage: string
+}
+
+const DOWNLOAD_IMAGES_MESSAGE = "EAC_DOWNLOAD_IMAGES"
 const FETCH_IMAGE_BLOB_MESSAGE = "EAC_FETCH_IMAGE_BLOB"
-const PANEL_ID = "eac-gemini-tools"
-const STYLE_ID = "eac-gemini-tools-style"
 const MESSAGE_SELECTOR = "user-query, model-response"
 const GENERATED_IMAGE_CONTAINER_SELECTOR = "generated-image, .generated-image-container"
 const WATERMARK_PROCESSED_STATE_KEY = "eacWatermarkProcessed"
 const AUTO_PROCESS_DEBOUNCE_MS = 120
 const IMAGE_DOWNLOAD_THROTTLE_MS = 150
+const ORIGINAL_EXPORT_WAIT_TIMEOUT_MS = 120000
+const ORIGINAL_EXPORT_POLL_INTERVAL_MS = 180
 
 const WATERMARK_ALPHA_THRESHOLD = 0.002
 const WATERMARK_MAX_ALPHA = 0.99
@@ -129,12 +154,30 @@ const normalizeMarkdownOutput = (value: string) =>
     .replace(/\n{3,}/g, "\n\n")
     .trim()
 
+const isMeaningfulChatTitle = (value: string) => {
+  const title = value.trim()
+  if (!title) return false
+  if (title === "New chat" || title === "Gemini" || title === "Google Gemini") return false
+  return true
+}
+
 const getChatTitle = () => {
+  const titleContainer = document.querySelector<HTMLElement>(
+    '[class*="conversation-title-container"]'
+  )
+  const containerTitle = normalizeInline(titleContainer?.textContent || "")
+  if (isMeaningfulChatTitle(containerTitle)) {
+    return containerTitle
+  }
+
   const title = document.title
     .replace(/^Gemini\s*-\s*/i, "")
     .replace(/\s*-\s*Gemini\s*$/i, "")
     .trim()
-  return title || "Gemini Chat"
+  if (isMeaningfulChatTitle(title)) {
+    return title
+  }
+  return "Gemini Chat"
 }
 
 const toSafeFileName = (value: string) =>
@@ -466,6 +509,53 @@ const downloadTextFile = (filename: string, content: string, mimeType: string) =
   triggerBlobDownload(filename, new Blob([content], { type: mimeType }))
 }
 
+const toDataUrl = async (blob: Blob) =>
+  await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result)
+        return
+      }
+      reject(new Error("图片编码失败"))
+    }
+    reader.onerror = () => {
+      reject(new Error("图片编码失败"))
+    }
+    reader.readAsDataURL(blob)
+  })
+
+const isFirefoxBrowser = /firefox/i.test(navigator.userAgent)
+const GOOGLE_IMAGE_HOST_PATTERN = /(^|\.)((?:googleusercontent\.com)|(?:ggpht\.com))$/i
+const GOOGLE_SIZE_PATTERN = /=[swh]\d+[^?#]*/i
+
+const normalizeGoogleImageToOriginalUrl = (value: string) => {
+  const absolute = toAbsoluteImageUrl(value)
+  if (!absolute) return ""
+
+  let parsed: URL
+  try {
+    parsed = new URL(absolute)
+  } catch {
+    return ""
+  }
+
+  if (!GOOGLE_IMAGE_HOST_PATTERN.test(parsed.hostname)) return absolute
+
+  let target = absolute
+  if (!isFirefoxBrowser && target.includes("/rd-gg/")) {
+    target = target.replace("/rd-gg/", "/rd-gg-dl/")
+  }
+
+  if (GOOGLE_SIZE_PATTERN.test(target)) {
+    target = target.replace(GOOGLE_SIZE_PATTERN, "=s0")
+  } else if (!target.includes("=s0")) {
+    target = target.includes("=") ? `${target}-s0` : `${target}=s0`
+  }
+
+  return toAbsoluteImageUrl(target)
+}
+
 const isLikelyDecorativeImage = (img: HTMLImageElement) => {
   const width = img.naturalWidth || img.width
   const height = img.naturalHeight || img.height
@@ -541,26 +631,27 @@ const parseSrcSetEntries = (srcset: string) => {
   return parsed.map((entry) => entry.url)
 }
 
-const rewriteGoogleImageToOriginalUrl = (value: string) => {
-  try {
-    const url = new URL(value)
-    if (!/(^|\.)(googleusercontent\.com|ggpht\.com)$/i.test(url.hostname)) return ""
-    const marker = url.pathname.lastIndexOf("=")
-    if (marker <= url.pathname.lastIndexOf("/")) return ""
-    const optionSuffix = url.pathname.slice(marker + 1)
-    if (!/[a-z]/i.test(optionSuffix) || !/\d/.test(optionSuffix)) return ""
-    const rewritten = new URL(url.toString())
-    rewritten.pathname = `${url.pathname.slice(0, marker)}=s0`
-    return rewritten.toString()
-  } catch {
-    return ""
-  }
-}
-
 const pushUniqueUrl = (target: string[], value: string) => {
   if (!value) return
   if (target.includes(value)) return
   target.push(value)
+}
+
+const collectUrlLikeValuesFromElement = (element: Element, candidates: string[]) => {
+  for (const attributeName of element.getAttributeNames()) {
+    const rawValue = element.getAttribute(attributeName)
+    if (!rawValue) continue
+    const value = rawValue.trim()
+    if (!value) continue
+
+    const isUrlHint = /(https?:|blob:|data:|\/rd-gg(?:-dl)?\/|=s\d+)/i.test(value)
+    const hasUrlLikeName = /href|src|url|download|origin|original|full|source|large|master/i.test(
+      attributeName
+    )
+    if (!isUrlHint && !hasUrlLikeName) continue
+
+    pushUniqueUrl(candidates, toAbsoluteImageUrl(value))
+  }
 }
 
 const collectOriginalImageCandidates = (image: HTMLImageElement) => {
@@ -601,24 +692,58 @@ const collectOriginalImageCandidates = (image: HTMLImageElement) => {
   pushUniqueUrl(candidates, toAbsoluteImageUrl(image.src || ""))
   pushUniqueUrl(candidates, toAbsoluteImageUrl(image.getAttribute("src") || ""))
 
+  const generatedContainer = image.closest<HTMLElement>(GENERATED_IMAGE_CONTAINER_SELECTOR)
+  if (generatedContainer) {
+    collectUrlLikeValuesFromElement(generatedContainer, candidates)
+
+    const downloadButton = generatedContainer.querySelector<HTMLElement>(
+      'button[data-test-id="download-generated-image-button"], download-generated-image-button, download-generated-image-button button'
+    )
+    if (downloadButton) {
+      collectUrlLikeValuesFromElement(downloadButton, candidates)
+      for (const child of Array.from(downloadButton.querySelectorAll("*"))) {
+        collectUrlLikeValuesFromElement(child, candidates)
+      }
+    }
+
+    for (const link of Array.from(
+      generatedContainer.querySelectorAll<HTMLAnchorElement>("a[href]")
+    )) {
+      pushUniqueUrl(candidates, toAbsoluteImageUrl(link.href))
+    }
+  }
+
   return candidates
 }
 
 const selectBestImageUrl = (candidates: string[]) => {
-  for (const candidate of candidates) {
-    const rewritten = rewriteGoogleImageToOriginalUrl(candidate)
-    if (rewritten) {
-      return rewritten
-    }
+  const scored = candidates
+    .map((candidate) => {
+      const absolute = toAbsoluteImageUrl(candidate)
+      if (!absolute) return { candidate: "", score: -1000 }
 
+      let score = 0
+      if (absolute.includes("/rd-gg-dl/")) score += 100
+      else if (absolute.includes("/rd-gg/")) score += 70
+      if (/(googleusercontent\.com|ggpht\.com)/i.test(absolute)) score += 50
+      if (/=s0(?:$|[&#?])/i.test(absolute)) score += 20
+      if (absolute.startsWith("blob:") || absolute.startsWith("data:")) score -= 200
+      return { candidate: absolute, score }
+    })
+    .filter((item) => item.candidate.length > 0)
+    .sort((a, b) => b.score - a.score)
+
+  for (const { candidate } of scored) {
     if (!isLikelyImageResourceUrl(candidate)) continue
+    if (candidate.startsWith("blob:")) continue
 
-    if (!candidate.startsWith("blob:")) {
-      return candidate
+    const normalized = normalizeGoogleImageToOriginalUrl(candidate)
+    if (normalized) {
+      return normalized
     }
   }
 
-  return candidates[0] || ""
+  return ""
 }
 
 const isGeminiGeneratedImageElement = (image: HTMLImageElement) => {
@@ -862,7 +987,8 @@ const removeGeminiWatermarkFromUrl = async (url: string) => {
   }
 
   try {
-    const blob = await fetchImageBlobInBackground(url)
+    const normalizedUrl = normalizeGoogleImageToOriginalUrl(url) || url
+    const blob = await fetchImageBlobInBackground(normalizedUrl)
     return await removeGeminiWatermarkFromBlob(blob)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -951,23 +1077,240 @@ const startAutoWatermarkRemover = async () => {
   })
 }
 
-const downloadWatermarkFreeChatImages = async (
-  urls: string[],
-  setStatus: (message: string, isError?: boolean) => void
+const getImageExportFolder = () => `Enhance-AI-Chat/${toSafeFileName(getChatTitle())}`
+
+const downloadImagesViaBackground = async (items: DownloadImageItem[]) => {
+  const response = (await browser.runtime.sendMessage({
+    type: DOWNLOAD_IMAGES_MESSAGE,
+    items,
+  })) as DownloadImagesResponse | undefined
+
+  if (!response?.ok) {
+    throw new Error("图片下载失败，请重试")
+  }
+
+  return response
+}
+
+const isElementVisible = (element: HTMLElement) => {
+  if (!element.isConnected) return false
+  const style = window.getComputedStyle(element)
+  if (style.display === "none" || style.visibility === "hidden") return false
+  const rect = element.getBoundingClientRect()
+  return rect.width > 0 && rect.height > 0
+}
+
+const resolveButtonWrapperTarget = (wrapper: HTMLDivElement) =>
+  wrapper.closest<HTMLElement>("button, [role='button']") ||
+  wrapper.querySelector<HTMLElement>("button, [role='button']") ||
+  wrapper
+
+const isElementDisabled = (element: HTMLElement | null) => {
+  if (!element) return true
+  if (element.hasAttribute("disabled")) return true
+  if (element.getAttribute("aria-disabled") === "true") return true
+  if (element instanceof HTMLButtonElement && element.disabled) return true
+  const style = window.getComputedStyle(element)
+  if (style.pointerEvents === "none") return true
+  return false
+}
+
+const hasLoadingLikeClass = (element: Element) => {
+  const className = (element.getAttribute("class") || "").toLowerCase()
+  if (!className) return false
+  return /(loading|pending|busy|spinner|spinning)/i.test(className)
+}
+
+const isButtonWrapperBusy = (wrapper: HTMLDivElement) => {
+  if (!wrapper.isConnected) return false
+  if (wrapper.matches('[aria-busy="true"], [data-loading="true"], [data-state="loading"]'))
+    return true
+  if (hasLoadingLikeClass(wrapper)) return true
+  if (wrapper.querySelector('[aria-busy="true"], [data-loading="true"], [data-state="loading"]'))
+    return true
+  if (wrapper.querySelector('[class*="loading"], [class*="spinner"], [class*="busy"]')) return true
+
+  const target = resolveButtonWrapperTarget(wrapper)
+  if (target && hasLoadingLikeClass(target)) return true
+  return false
+}
+
+const isButtonWrapperReady = (wrapper: HTMLDivElement) => {
+  const target = resolveButtonWrapperTarget(wrapper)
+  if (!target) return false
+  if (!isElementVisible(target)) return false
+  if (isElementDisabled(target)) return false
+  if (isButtonWrapperBusy(wrapper)) return false
+  return true
+}
+
+const hasDownloadLikeHint = (wrapper: HTMLDivElement) => {
+  const target = resolveButtonWrapperTarget(wrapper)
+  const hintValues = [
+    wrapper.getAttribute("aria-label"),
+    wrapper.getAttribute("title"),
+    wrapper.getAttribute("data-test-id"),
+    wrapper.getAttribute("data-testid"),
+    target?.getAttribute("aria-label"),
+    target?.getAttribute("title"),
+    target?.getAttribute("data-test-id"),
+    target?.getAttribute("data-testid"),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+
+  if (!hintValues) return false
+  return /(download|下载|save|原图|image|图片|export)/i.test(hintValues)
+}
+
+const getOriginalImageButtonWrappers = () => {
+  const wrappers = Array.from(
+    document.querySelectorAll<HTMLDivElement>("div.button-icon-wrapper")
+  ).filter((wrapper) => isElementVisible(wrapper))
+  if (wrappers.length === 0) return wrappers
+
+  const wrappersWithHint = wrappers.filter((wrapper) => hasDownloadLikeHint(wrapper))
+  return wrappersWithHint.length > 0 ? wrappersWithHint : wrappers
+}
+
+const getButtonWrapperByIndex = (index: number) => {
+  const wrappers = getOriginalImageButtonWrappers()
+  if (wrappers.length === 0) return null
+  return wrappers[index] || wrappers[wrappers.length - 1] || null
+}
+
+const waitForCondition = async (
+  condition: () => boolean,
+  timeoutMs: number,
+  intervalMs: number,
+  timeoutMessage: string
 ) => {
-  const chatBase = toSafeFileName(getChatTitle())
+  const start = Date.now()
+  while (Date.now() - start <= timeoutMs) {
+    if (condition()) return
+    await wait(intervalMs)
+  }
+  throw new Error(timeoutMessage)
+}
+
+const waitForConditionWithTimeout = async (
+  condition: () => boolean,
+  timeoutMs: number,
+  intervalMs: number
+) => {
+  const start = Date.now()
+  while (Date.now() - start <= timeoutMs) {
+    if (condition()) return true
+    await wait(intervalMs)
+  }
+  return false
+}
+
+const isAnyOriginalButtonBusy = () =>
+  getOriginalImageButtonWrappers().some((wrapper) => isButtonWrapperBusy(wrapper))
+
+const clickButtonWrapper = (wrapper: HTMLDivElement) => {
+  const target = resolveButtonWrapperTarget(wrapper)
+  if (!target) throw new Error("未找到可点击的下载按钮")
+  target.dispatchEvent(
+    new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+    })
+  )
+}
+
+const downloadOriginalChatImages = async (): Promise<BatchDownloadResult> => {
+  const wrappers = getOriginalImageButtonWrappers()
+  if (wrappers.length === 0) {
+    return {
+      total: 0,
+      success: 0,
+      failed: 0,
+      lastErrorMessage: '未找到 class="button-icon-wrapper" 的图片下载按钮',
+    }
+  }
+
+  const total = wrappers.length
+  let success = 0
+  let failed = 0
+  let lastErrorMessage = ""
+
+  for (let index = 0; index < total; index += 1) {
+    const step = index + 1
+
+    try {
+      await waitForCondition(
+        () => {
+          const wrapper = getButtonWrapperByIndex(index)
+          return Boolean(wrapper && isButtonWrapperReady(wrapper))
+        },
+        ORIGINAL_EXPORT_WAIT_TIMEOUT_MS,
+        ORIGINAL_EXPORT_POLL_INTERVAL_MS,
+        `第 ${step} 张图片下载按钮长时间不可点击`
+      )
+
+      const wrapper = getButtonWrapperByIndex(index)
+      if (!wrapper) {
+        throw new Error(`第 ${step} 张图片按钮不存在`)
+      }
+
+      clickButtonWrapper(wrapper)
+
+      const enteredBusyState = await waitForConditionWithTimeout(
+        () => isAnyOriginalButtonBusy(),
+        2500,
+        120
+      )
+
+      if (enteredBusyState) {
+        await waitForCondition(
+          () => !isAnyOriginalButtonBusy(),
+          ORIGINAL_EXPORT_WAIT_TIMEOUT_MS,
+          ORIGINAL_EXPORT_POLL_INTERVAL_MS,
+          `第 ${step} 张图片下载超时`
+        )
+      } else {
+        await wait(500)
+      }
+
+      success += 1
+    } catch (error) {
+      failed += 1
+      lastErrorMessage = error instanceof Error ? error.message : String(error)
+      await wait(300)
+    }
+  }
+
+  return {
+    total,
+    success,
+    failed,
+    lastErrorMessage,
+  }
+}
+
+const downloadWatermarkFreeChatImages = async (urls: string[]): Promise<BatchDownloadResult> => {
+  const folder = getImageExportFolder()
   let success = 0
   let failed = 0
   let lastErrorMessage = ""
 
   for (let index = 0; index < urls.length; index += 1) {
     const url = urls[index]
-    setStatus(`图片处理中 ${index + 1}/${urls.length}`)
     try {
       const cleanBlob = await removeGeminiWatermarkFromUrl(url)
-      const filename = `${chatBase}-image-${String(index + 1).padStart(2, "0")}.png`
-      triggerBlobDownload(filename, cleanBlob)
-      success += 1
+      const dataUrl = await toDataUrl(cleanBlob)
+      const filename = `${folder}/image-${String(index + 1).padStart(2, "0")}.png`
+      const response = await downloadImagesViaBackground([{ url: dataUrl, filename }])
+      if (response.errors.length > 0) {
+        failed += 1
+        lastErrorMessage = response.errors[0] || "下载失败"
+      } else {
+        success += response.downloaded
+      }
       await wait(IMAGE_DOWNLOAD_THROTTLE_MS)
     } catch (error) {
       failed += 1
@@ -975,160 +1318,164 @@ const downloadWatermarkFreeChatImages = async (
     }
   }
 
-  if (failed > 0) {
-    const detail = lastErrorMessage ? `，最近错误：${lastErrorMessage}` : ""
-    setStatus(`图片下载完成 ${success}/${urls.length}，失败 ${failed} 张${detail}`, true)
-    return
+  return {
+    total: urls.length,
+    success,
+    failed,
+    lastErrorMessage,
   }
-  setStatus(`图片下载完成，共 ${success} 张`)
 }
 
-const ensureStyle = () => {
-  if (document.getElementById(STYLE_ID)) return
-  const style = document.createElement("style")
-  style.id = STYLE_ID
-  style.textContent = `
-    #${PANEL_ID} {
-      position: fixed;
-      right: 16px;
-      bottom: 16px;
-      width: 260px;
-      z-index: 2147483647;
-      border-radius: 12px;
-      border: 1px solid rgba(30, 41, 59, 0.35);
-      background: rgba(15, 23, 42, 0.94);
-      color: #e2e8f0;
-      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      box-shadow: 0 12px 24px rgba(2, 6, 23, 0.35);
-      backdrop-filter: blur(8px);
-    }
-    #${PANEL_ID} .eac-head {
-      padding: 10px 12px 6px;
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0.02em;
-    }
-    #${PANEL_ID} .eac-actions {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      padding: 0 10px 10px;
-    }
-    #${PANEL_ID} .eac-button {
-      border: 1px solid rgba(148, 163, 184, 0.4);
-      background: rgba(30, 41, 59, 0.8);
-      color: #e2e8f0;
-      border-radius: 8px;
-      font-size: 12px;
-      line-height: 1.35;
-      padding: 8px 10px;
-      cursor: pointer;
-      text-align: left;
-    }
-    #${PANEL_ID} .eac-button:hover {
-      background: rgba(51, 65, 85, 0.9);
-    }
-    #${PANEL_ID} .eac-status {
-      border-top: 1px solid rgba(148, 163, 184, 0.25);
-      padding: 8px 10px;
-      font-size: 11px;
-      color: #cbd5e1;
-      min-height: 30px;
-    }
-    #${PANEL_ID} .eac-status[data-error="1"] {
-      color: #fca5a5;
-    }
-  `
-  document.head.append(style)
+const formatBatchResultMessage = (label: string, result: BatchDownloadResult) => {
+  if (result.total === 0) {
+    return result.lastErrorMessage || `${label}未找到可处理内容`
+  }
+
+  if (result.failed > 0) {
+    const detail = result.lastErrorMessage ? `，最近错误：${result.lastErrorMessage}` : ""
+    return `${label}完成 ${result.success}/${result.total}，失败 ${result.failed} 张${detail}`
+  }
+
+  return `${label}完成，共 ${result.success} 张`
 }
 
-const ensurePanel = () => {
-  if (document.getElementById(PANEL_ID)) return
-
-  const root = document.createElement("aside")
-  root.id = PANEL_ID
-
-  const head = document.createElement("div")
-  head.className = "eac-head"
-  head.textContent = "Enhance AI Chat"
-  root.append(head)
-
-  const actions = document.createElement("div")
-  actions.className = "eac-actions"
-  root.append(actions)
-
-  const status = document.createElement("div")
-  status.className = "eac-status"
-  status.textContent = "就绪"
-
-  const setStatus = (message: string, isError = false) => {
-    status.textContent = message
-    status.dataset.error = isError ? "1" : "0"
+const handleExportMarkdown = (): GeminiPopupActionResponse => {
+  const messages = extractChatMessages()
+  if (messages.length === 0) {
+    return {
+      ok: false,
+      message: "未找到可导出的聊天内容",
+    }
   }
 
-  const createButton = (label: string, onClick: () => void | Promise<void>) => {
-    const button = document.createElement("button")
-    button.className = "eac-button"
-    button.type = "button"
-    button.textContent = label
-    button.addEventListener("click", () => {
-      void onClick()
-    })
-    actions.append(button)
+  const markdown = buildMarkdown(messages)
+  const filename = `${toSafeFileName(getChatTitle())}-${getTimestamp()}.md`
+  downloadTextFile(filename, markdown, "text/markdown;charset=utf-8")
+
+  return {
+    ok: true,
+    message: `已导出 ${messages.length} 条消息`,
+  }
+}
+
+const handleExportGmailDraft = (): GeminiPopupActionResponse => {
+  const messages = extractChatMessages()
+  if (messages.length === 0) {
+    return {
+      ok: false,
+      message: "未找到可导出的聊天内容",
+    }
   }
 
-  createButton("导出聊天 Markdown（高保真）", async () => {
-    const messages = extractChatMessages()
-    if (messages.length === 0) {
-      setStatus("未找到可导出的聊天内容", true)
-      return
+  const subject = `[Gemini] ${getChatTitle()}`
+  let body = buildGmailBody(messages)
+  let statusMessage = "已打开 Gmail 草稿窗口"
+
+  if (body.length > 12000) {
+    body = `${body.slice(0, 12000)}\n\n[内容过长，已截断。建议使用 Markdown 导出完整记录]`
+    statusMessage = "聊天较长，已截断后写入 Gmail 草稿"
+  }
+
+  const gmailUrl =
+    `https://mail.google.com/mail/?view=cm&fs=1&su=${encodeURIComponent(subject)}` +
+    `&body=${encodeURIComponent(body)}`
+  const openedWindow = window.open(gmailUrl, "_blank", "noopener,noreferrer")
+
+  if (!openedWindow) {
+    return {
+      ok: false,
+      message: "草稿窗口被浏览器拦截，请允许弹窗后重试",
     }
-    const markdown = buildMarkdown(messages)
-    const filename = `${toSafeFileName(getChatTitle())}-${getTimestamp()}.md`
-    downloadTextFile(filename, markdown, "text/markdown;charset=utf-8")
-    setStatus(`已导出 ${messages.length} 条消息`)
+  }
+
+  return {
+    ok: true,
+    message: statusMessage,
+  }
+}
+
+const handleDownloadWatermarkFreeImages = async (): Promise<GeminiPopupActionResponse> => {
+  const urls = collectGeminiOriginalImageUrls()
+  if (urls.length === 0) {
+    return {
+      ok: false,
+      message: "未找到可下载的 Gemini 图片",
+    }
+  }
+
+  try {
+    await ensureWatermarkAssetsLoaded()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {
+      ok: false,
+      message: `去水印模板加载失败: ${message}`,
+    }
+  }
+
+  const result = await downloadWatermarkFreeChatImages(urls)
+  return {
+    ok: result.failed === 0,
+    message: formatBatchResultMessage("去水印图片导出", result),
+  }
+}
+
+const handleDownloadOriginalImages = async (): Promise<GeminiPopupActionResponse> => {
+  const result = await downloadOriginalChatImages()
+  const hasFailure = result.total === 0 || result.failed > 0
+
+  return {
+    ok: !hasFailure,
+    message: formatBatchResultMessage("原图导出", result),
+  }
+}
+
+const handleGeminiPopupAction = async (): Promise<GeminiPopupActionResponse> => {
+  return {
+    ok: true,
+    message: "连接成功，可以执行 Gemini 导入操作",
+  }
+}
+
+let popupMessageListenerRegistered = false
+
+const registerPopupMessageListener = () => {
+  if (popupMessageListenerRegistered) return
+
+  browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (!message || typeof message !== "object") return
+    if ((message as { type?: string }).type !== GEMINI_POPUP_ACTION_MESSAGE) return
+    if (!isGeminiPopupActionMessage(message)) return
+
+    const run = async (): Promise<GeminiPopupActionResponse> => {
+      switch (message.action) {
+        case GEMINI_POPUP_ACTIONS.PING:
+          return await handleGeminiPopupAction()
+        case GEMINI_POPUP_ACTIONS.EXPORT_MARKDOWN:
+          return handleExportMarkdown()
+        case GEMINI_POPUP_ACTIONS.EXPORT_GMAIL_DRAFT:
+          return handleExportGmailDraft()
+        case GEMINI_POPUP_ACTIONS.DOWNLOAD_WATERMARK_FREE_IMAGES:
+          return await handleDownloadWatermarkFreeImages()
+        case GEMINI_POPUP_ACTIONS.DOWNLOAD_ORIGINAL_IMAGES:
+          return await handleDownloadOriginalImages()
+      }
+    }
+
+    void run()
+      .then((response) => sendResponse(response))
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error)
+        sendResponse({
+          ok: false,
+          message: `执行失败: ${message}`,
+        })
+      })
+
+    return true
   })
 
-  createButton("导出到 Gmail 草稿", async () => {
-    const messages = extractChatMessages()
-    if (messages.length === 0) {
-      setStatus("未找到可导出的聊天内容", true)
-      return
-    }
-    const subject = `[Gemini] ${getChatTitle()}`
-    let body = buildGmailBody(messages)
-    if (body.length > 12000) {
-      body = `${body.slice(0, 12000)}\n\n[内容过长，已截断。建议使用 Markdown 导出完整记录]`
-      setStatus("聊天较长，已截断后写入 Gmail 草稿")
-    } else {
-      setStatus("已打开 Gmail 草稿窗口")
-    }
-    const gmailUrl =
-      `https://mail.google.com/mail/?view=cm&fs=1&su=${encodeURIComponent(subject)}` +
-      `&body=${encodeURIComponent(body)}`
-    window.open(gmailUrl, "_blank", "noopener,noreferrer")
-  })
-
-  createButton("下载图片", async () => {
-    const urls = collectGeminiOriginalImageUrls()
-    if (urls.length === 0) {
-      setStatus("未找到可下载的 Gemini 图片", true)
-      return
-    }
-
-    try {
-      await ensureWatermarkAssetsLoaded()
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      setStatus(`去水印模板加载失败: ${message}`, true)
-      return
-    }
-
-    await downloadWatermarkFreeChatImages(urls, setStatus)
-  })
-
-  root.append(status)
-  document.documentElement.append(root)
+  popupMessageListenerRegistered = true
 }
 
 export default defineContentScript({
@@ -1136,8 +1483,7 @@ export default defineContentScript({
   runAt: "document_idle",
   main() {
     if (window.top !== window.self) return
-    ensureStyle()
-    ensurePanel()
+    registerPopupMessageListener()
     void startAutoWatermarkRemover()
   },
 })

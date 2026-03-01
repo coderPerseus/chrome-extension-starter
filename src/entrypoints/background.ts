@@ -1,3 +1,4 @@
+import { EAC_ONBOARDING_SEEN_STORAGE_KEY } from "@/shared/messages/gemini-actions"
 import { ORPC_PORT_NAME } from "@/shared/orpc/constants"
 import { router } from "@/shared/orpc/router"
 import { RPCHandler } from "@orpc/server/message-port"
@@ -167,6 +168,18 @@ const fetchImageBlob = async (url: string, referrer?: string) => {
 }
 
 export default defineBackground(() => {
+  browser.runtime.onInstalled.addListener((details) => {
+    if (details.reason !== "install") return
+
+    void browser.storage.local
+      .set({ [EAC_ONBOARDING_SEEN_STORAGE_KEY]: false })
+      .catch(() => undefined)
+
+    void browser.tabs.create({
+      url: browser.runtime.getURL("/onboarding.html"),
+    })
+  })
+
   browser.runtime.onConnect.addListener((port) => {
     if (port.name !== ORPC_PORT_NAME) return
     if (port.sender?.id !== browser.runtime.id) {
