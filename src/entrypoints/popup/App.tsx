@@ -6,6 +6,7 @@ import {
   type GeminiPopupActionResponse,
 } from "@/shared/messages/gemini-actions";
 import { useEffect, useMemo, useState } from "react";
+import logo from "@/assets/logo.png";
 
 type StatusType = "info" | "success" | "error";
 
@@ -320,9 +321,13 @@ function App() {
     <main className="popup-shell">
       <section className="panel-card">
         <header className="panel-head">
-          <div>
-            <p className="eyebrow">Gemini 导入</p>
-            <h1>Enhance AI Chat</h1>
+          <div className="items-center flex gap-2">
+            <img
+              src={logo}
+              alt="Enhance AI Chat"
+              className="panel-logo w-10 rounded-2xl"
+            />{" "}
+            <span className="text-lg"> AI 聊天增强</span>
           </div>
           <button
             type="button"
