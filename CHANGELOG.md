@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.4.0](https://github.com/coderPerseus/chrome-extension-starter/compare/wxt-react-starter-v1.3.0...wxt-react-starter-v1.4.0) (2026-03-01)
+
+
+### Features
+
+* add logo to the popup header for branding enhancement ([eed189e](https://github.com/coderPerseus/chrome-extension-starter/commit/eed189e9642178a6fb3d883b42ffe772428ef6e1))
+* gmail 聊天导出和图片导出 ([5e1ed09](https://github.com/coderPerseus/chrome-extension-starter/commit/5e1ed09fe3193ed67150dccb56f3c569e44b80fd))
+* **onboarding:** add onboarding app with Gemini integration ([52bafd2](https://github.com/coderPerseus/chrome-extension-starter/commit/52bafd2e0cd732dc2e95658b1d4242ba647e73d9))
+* 图片水印 ([9fc92ca](https://github.com/coderPerseus/chrome-extension-starter/commit/9fc92ca1e552022c8c614f329863de82ef5392b2))
+
 ## [1.3.0](https://github.com/coderPerseus/chrome-extension-starter/compare/wxt-react-starter-v1.2.0...wxt-react-starter-v1.3.0) (2026-01-26)
 
 
