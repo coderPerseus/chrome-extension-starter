@@ -9,17 +9,6 @@ type ChatMessage = {
   markdown: string
 }
 
-type DownloadImageItem = {
-  url: string
-  filename: string
-}
-
-type DownloadImagesResponse = {
-  ok: boolean
-  downloaded: number
-  errors: string[]
-}
-
 type FetchImageBlobResponse =
   | {
       ok: true
@@ -49,12 +38,13 @@ type MarkdownRenderContext = {
   listDepth: number
 }
 
-const DOWNLOAD_IMAGES_MESSAGE = "EAC_DOWNLOAD_IMAGES"
 const FETCH_IMAGE_BLOB_MESSAGE = "EAC_FETCH_IMAGE_BLOB"
 const PANEL_ID = "eac-gemini-tools"
 const STYLE_ID = "eac-gemini-tools-style"
-const VISUAL_CLEAN_CLASS = "eac-visual-clean"
 const MESSAGE_SELECTOR = "user-query, model-response"
+const GENERATED_IMAGE_CONTAINER_SELECTOR = "generated-image, .generated-image-container"
+const WATERMARK_PROCESSED_STATE_KEY = "eacWatermarkProcessed"
+const AUTO_PROCESS_DEBOUNCE_MS = 120
 const IMAGE_DOWNLOAD_THROTTLE_MS = 150
 
 const WATERMARK_ALPHA_THRESHOLD = 0.002
@@ -476,23 +466,6 @@ const downloadTextFile = (filename: string, content: string, mimeType: string) =
   triggerBlobDownload(filename, new Blob([content], { type: mimeType }))
 }
 
-const guessImageExtension = (value: string) => {
-  try {
-    const pathname = new URL(value, location.href).pathname.toLowerCase()
-    const match = pathname.match(/\.(png|jpg|jpeg|webp|gif|bmp|svg|avif)$/)
-    if (!match) return "png"
-    return match[1] === "jpeg" ? "jpg" : match[1]
-  } catch {
-    return "png"
-  }
-}
-
-const getBaseName = (filename: string) => {
-  const lastPart = filename.split("/").pop() || filename
-  const withoutExt = lastPart.replace(/\.[^.]+$/, "")
-  return toSafeFileName(withoutExt || "image")
-}
-
 const isLikelyDecorativeImage = (img: HTMLImageElement) => {
   const width = img.naturalWidth || img.width
   const height = img.naturalHeight || img.height
@@ -500,30 +473,194 @@ const isLikelyDecorativeImage = (img: HTMLImageElement) => {
   return width <= 64 && height <= 64
 }
 
-const collectGeminiImageUrls = () => {
+const ORIGINAL_IMAGE_ATTRIBUTE_HINTS = [
+  "data-original-src",
+  "data-origin-src",
+  "data-full-src",
+  "data-full-url",
+  "data-download-url",
+  "data-source-url",
+  "data-large-src",
+  "data-eac-original-url",
+]
+
+const isSupportedImageProtocol = (value: string) =>
+  value.startsWith("https:") ||
+  value.startsWith("http:") ||
+  value.startsWith("blob:") ||
+  value.startsWith("data:")
+
+const toAbsoluteImageUrl = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.startsWith("javascript:")) return ""
+  try {
+    const url = new URL(trimmed, location.href)
+    const absolute = url.toString()
+    if (!isSupportedImageProtocol(absolute)) return ""
+    if (absolute.startsWith("data:")) return ""
+    return absolute
+  } catch {
+    return ""
+  }
+}
+
+const isLikelyImageResourceUrl = (value: string) => {
+  if (value.startsWith("blob:") || value.startsWith("data:")) return true
+
+  try {
+    const url = new URL(value)
+    if (/(^|\.)(googleusercontent\.com|ggpht\.com)$/i.test(url.hostname)) return true
+    const pathname = url.pathname.toLowerCase()
+    if (/\.(png|jpe?g|webp|gif|bmp|svg|avif)(?:$|[/?#])/.test(pathname)) return true
+    if (/(?:^|\/)(?:image|images|media)(?:\/|$)/.test(pathname)) return true
+    const search = url.search.toLowerCase()
+    if (/(?:^|[?&])(img|image|media|content)=/.test(search)) return true
+    return false
+  } catch {
+    return false
+  }
+}
+
+const parseSrcSetEntries = (srcset: string) => {
+  const parts = srcset
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+  const parsed = parts
+    .map((entry) => {
+      const [urlPart, descriptor = ""] = entry.split(/\s+/, 2)
+      const width = Number.parseInt(descriptor.replace(/[^0-9]/g, ""), 10)
+      const rank = Number.isFinite(width) ? width : 0
+      return {
+        url: toAbsoluteImageUrl(urlPart),
+        rank,
+      }
+    })
+    .filter((entry) => entry.url.length > 0)
+  parsed.sort((a, b) => b.rank - a.rank)
+  return parsed.map((entry) => entry.url)
+}
+
+const rewriteGoogleImageToOriginalUrl = (value: string) => {
+  try {
+    const url = new URL(value)
+    if (!/(^|\.)(googleusercontent\.com|ggpht\.com)$/i.test(url.hostname)) return ""
+    const marker = url.pathname.lastIndexOf("=")
+    if (marker <= url.pathname.lastIndexOf("/")) return ""
+    const optionSuffix = url.pathname.slice(marker + 1)
+    if (!/[a-z]/i.test(optionSuffix) || !/\d/.test(optionSuffix)) return ""
+    const rewritten = new URL(url.toString())
+    rewritten.pathname = `${url.pathname.slice(0, marker)}=s0`
+    return rewritten.toString()
+  } catch {
+    return ""
+  }
+}
+
+const pushUniqueUrl = (target: string[], value: string) => {
+  if (!value) return
+  if (target.includes(value)) return
+  target.push(value)
+}
+
+const collectOriginalImageCandidates = (image: HTMLImageElement) => {
+  const candidates: string[] = []
+
+  for (const attributeName of ORIGINAL_IMAGE_ATTRIBUTE_HINTS) {
+    const value = image.getAttribute(attributeName)
+    if (!value) continue
+    pushUniqueUrl(candidates, toAbsoluteImageUrl(value))
+  }
+
+  for (const attributeName of image.getAttributeNames()) {
+    if (!/original|origin|full|source|download|large|master/i.test(attributeName)) continue
+    const value = image.getAttribute(attributeName)
+    if (!value) continue
+    pushUniqueUrl(candidates, toAbsoluteImageUrl(value))
+  }
+
+  for (const [key, value] of Object.entries(image.dataset)) {
+    if (!value) continue
+    if (!/original|origin|full|source|download|large|master/i.test(key)) continue
+    pushUniqueUrl(candidates, toAbsoluteImageUrl(value))
+  }
+
+  const parentLink = image.closest<HTMLAnchorElement>("a[href]")
+  if (parentLink?.href) {
+    pushUniqueUrl(candidates, toAbsoluteImageUrl(parentLink.href))
+  }
+
+  const srcset = image.getAttribute("data-srcset") || image.getAttribute("srcset") || image.srcset
+  if (srcset) {
+    for (const srcsetUrl of parseSrcSetEntries(srcset)) {
+      pushUniqueUrl(candidates, srcsetUrl)
+    }
+  }
+
+  pushUniqueUrl(candidates, toAbsoluteImageUrl(image.currentSrc || ""))
+  pushUniqueUrl(candidates, toAbsoluteImageUrl(image.src || ""))
+  pushUniqueUrl(candidates, toAbsoluteImageUrl(image.getAttribute("src") || ""))
+
+  return candidates
+}
+
+const selectBestImageUrl = (candidates: string[]) => {
+  for (const candidate of candidates) {
+    const rewritten = rewriteGoogleImageToOriginalUrl(candidate)
+    if (rewritten) {
+      return rewritten
+    }
+
+    if (!isLikelyImageResourceUrl(candidate)) continue
+
+    if (!candidate.startsWith("blob:")) {
+      return candidate
+    }
+  }
+
+  return candidates[0] || ""
+}
+
+const isGeminiGeneratedImageElement = (image: HTMLImageElement) => {
+  if (isLikelyDecorativeImage(image)) return false
+  if (image.closest(GENERATED_IMAGE_CONTAINER_SELECTOR)) return true
+
+  const src = image.currentSrc || image.src || image.getAttribute("src") || ""
+  if (!src) return false
+  if (!/(googleusercontent\.com|ggpht\.com)/i.test(src)) return false
+  return image.closest("model-response") !== null
+}
+
+const findGeminiGeneratedImages = () => {
   const roots = Array.from(document.querySelectorAll<HTMLElement>("model-response"))
   const searchRoots = roots.length > 0 ? roots : [document.documentElement]
-  const urls = new Set<string>()
+  const result: HTMLImageElement[] = []
+  const visited = new Set<HTMLImageElement>()
 
   for (const root of searchRoots) {
     const images = Array.from(root.querySelectorAll<HTMLImageElement>("img"))
     for (const image of images) {
-      if (isLikelyDecorativeImage(image)) continue
-      const src = image.currentSrc || image.src || image.getAttribute("src") || ""
-      if (!src || src.startsWith("data:")) continue
-      urls.add(src)
+      if (visited.has(image)) continue
+      visited.add(image)
+      if (!isGeminiGeneratedImageElement(image)) continue
+      result.push(image)
+    }
+  }
+
+  return result
+}
+
+const collectGeminiOriginalImageUrls = () => {
+  const urls = new Set<string>()
+
+  for (const image of findGeminiGeneratedImages()) {
+    const selected = selectBestImageUrl(collectOriginalImageCandidates(image))
+    if (selected) {
+      urls.add(selected)
     }
   }
 
   return Array.from(urls)
-}
-
-const createDownloadItems = (urls: string[]): DownloadImageItem[] => {
-  const baseFolder = `Enhance-AI-Chat/${toSafeFileName(getChatTitle())}`
-  return urls.map((url, index) => ({
-    url,
-    filename: `${baseFolder}/image-${String(index + 1).padStart(2, "0")}.${guessImageExtension(url)}`,
-  }))
 }
 
 let watermarkAlphaMap48: Float32Array | null = null
@@ -733,6 +870,87 @@ const removeGeminiWatermarkFromUrl = async (url: string) => {
   }
 }
 
+const debounce = <T extends (...args: unknown[]) => void>(fn: T, waitMs: number): T => {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  return ((...args: unknown[]) => {
+    if (timer) {
+      clearTimeout(timer)
+    }
+    timer = setTimeout(() => {
+      timer = null
+      fn(...args)
+    }, waitMs)
+  }) as T
+}
+
+const autoProcessingQueue = new Set<HTMLImageElement>()
+const processedBlobUrlMap = new WeakMap<HTMLImageElement, string>()
+let autoWatermarkObserverStarted = false
+
+const processSingleGeminiImage = async (image: HTMLImageElement) => {
+  if (autoProcessingQueue.has(image)) return
+  if (image.dataset[WATERMARK_PROCESSED_STATE_KEY] === "true") return
+
+  const selectedUrl = selectBestImageUrl(collectOriginalImageCandidates(image))
+  if (!selectedUrl) return
+
+  autoProcessingQueue.add(image)
+  image.dataset[WATERMARK_PROCESSED_STATE_KEY] = "processing"
+
+  try {
+    const cleanBlob = await removeGeminiWatermarkFromUrl(selectedUrl)
+    const processedUrl = URL.createObjectURL(cleanBlob)
+    const oldProcessedUrl = processedBlobUrlMap.get(image)
+    if (oldProcessedUrl) {
+      URL.revokeObjectURL(oldProcessedUrl)
+    }
+
+    processedBlobUrlMap.set(image, processedUrl)
+    image.dataset.eacOriginalUrl = selectedUrl
+    image.dataset[WATERMARK_PROCESSED_STATE_KEY] = "true"
+    image.srcset = ""
+    image.src = processedUrl
+  } catch {
+    image.dataset[WATERMARK_PROCESSED_STATE_KEY] = "failed"
+  } finally {
+    autoProcessingQueue.delete(image)
+  }
+}
+
+const processDisplayedGeminiImages = () => {
+  for (const image of findGeminiGeneratedImages()) {
+    if (image.dataset[WATERMARK_PROCESSED_STATE_KEY] === "true") continue
+    if (image.dataset[WATERMARK_PROCESSED_STATE_KEY] === "processing") continue
+    void processSingleGeminiImage(image)
+  }
+}
+
+const startAutoWatermarkRemover = async () => {
+  if (autoWatermarkObserverStarted) return
+  autoWatermarkObserverStarted = true
+
+  try {
+    await ensureWatermarkAssetsLoaded()
+  } catch (error) {
+    console.warn("[Enhance AI Chat] watermark assets failed to load", error)
+    return
+  }
+
+  processDisplayedGeminiImages()
+  const debouncedProcess = debounce(processDisplayedGeminiImages, AUTO_PROCESS_DEBOUNCE_MS)
+  const root = document.body || document.documentElement
+  const observer = new MutationObserver(() => {
+    debouncedProcess()
+  })
+
+  observer.observe(root, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["src", "srcset", "class"],
+  })
+}
+
 const downloadWatermarkFreeChatImages = async (
   urls: string[],
   setStatus: (message: string, isError?: boolean) => void
@@ -744,10 +962,10 @@ const downloadWatermarkFreeChatImages = async (
 
   for (let index = 0; index < urls.length; index += 1) {
     const url = urls[index]
-    setStatus(`去水印处理中 ${index + 1}/${urls.length}`)
+    setStatus(`图片处理中 ${index + 1}/${urls.length}`)
     try {
       const cleanBlob = await removeGeminiWatermarkFromUrl(url)
-      const filename = `${chatBase}-clean-${String(index + 1).padStart(2, "0")}.png`
+      const filename = `${chatBase}-image-${String(index + 1).padStart(2, "0")}.png`
       triggerBlobDownload(filename, cleanBlob)
       success += 1
       await wait(IMAGE_DOWNLOAD_THROTTLE_MS)
@@ -759,48 +977,10 @@ const downloadWatermarkFreeChatImages = async (
 
   if (failed > 0) {
     const detail = lastErrorMessage ? `，最近错误：${lastErrorMessage}` : ""
-    setStatus(`去水印下载完成 ${success}/${urls.length}，失败 ${failed} 张${detail}`, true)
+    setStatus(`图片下载完成 ${success}/${urls.length}，失败 ${failed} 张${detail}`, true)
     return
   }
-  setStatus(`去水印下载完成，共 ${success} 张`)
-}
-
-const processLocalFilesForWatermarkRemoval = async (
-  files: FileList | null,
-  setStatus: (message: string, isError?: boolean) => void
-) => {
-  if (!files || files.length === 0) return
-
-  const imageFiles = Array.from(files).filter((file) => file.type.startsWith("image/"))
-  if (imageFiles.length === 0) {
-    setStatus("请选择 PNG/JPG/WebP 图片文件", true)
-    return
-  }
-
-  await ensureWatermarkAssetsLoaded()
-
-  let success = 0
-  let failed = 0
-  for (let index = 0; index < imageFiles.length; index += 1) {
-    const file = imageFiles[index]
-    setStatus(`本地去水印处理中 ${index + 1}/${imageFiles.length}`)
-    try {
-      const cleanBlob = await removeGeminiWatermarkFromBlob(file)
-      const base = getBaseName(file.name)
-      const filename = `${base}-clean-${String(index + 1).padStart(2, "0")}.png`
-      triggerBlobDownload(filename, cleanBlob)
-      success += 1
-      await wait(IMAGE_DOWNLOAD_THROTTLE_MS)
-    } catch {
-      failed += 1
-    }
-  }
-
-  if (failed > 0) {
-    setStatus(`本地去水印完成 ${success}/${imageFiles.length}，失败 ${failed} 张`, true)
-    return
-  }
-  setStatus(`本地去水印完成，共 ${success} 张`)
+  setStatus(`图片下载完成，共 ${success} 张`)
 }
 
 const ensureStyle = () => {
@@ -848,14 +1028,6 @@ const ensureStyle = () => {
     #${PANEL_ID} .eac-button:hover {
       background: rgba(51, 65, 85, 0.9);
     }
-    #${PANEL_ID} .eac-toggle {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 12px;
-      padding: 0 10px 10px;
-      color: #cbd5e1;
-    }
     #${PANEL_ID} .eac-status {
       border-top: 1px solid rgba(148, 163, 184, 0.25);
       padding: 8px 10px;
@@ -865,19 +1037,6 @@ const ensureStyle = () => {
     }
     #${PANEL_ID} .eac-status[data-error="1"] {
       color: #fca5a5;
-    }
-    #${PANEL_ID} .eac-hidden-file-input {
-      display: none;
-    }
-    .${VISUAL_CLEAN_CLASS} [class*="watermark" i],
-    .${VISUAL_CLEAN_CLASS} [id*="watermark" i],
-    .${VISUAL_CLEAN_CLASS} [data-watermark],
-    .${VISUAL_CLEAN_CLASS} [aria-label*="watermark" i],
-    .${VISUAL_CLEAN_CLASS} [class*="synthid" i],
-    .${VISUAL_CLEAN_CLASS} [aria-label*="synthid" i] {
-      visibility: hidden !important;
-      opacity: 0 !important;
-      pointer-events: none !important;
     }
   `
   document.head.append(style)
@@ -918,18 +1077,6 @@ const ensurePanel = () => {
     actions.append(button)
   }
 
-  const localFileInput = document.createElement("input")
-  localFileInput.className = "eac-hidden-file-input"
-  localFileInput.type = "file"
-  localFileInput.multiple = true
-  localFileInput.accept = "image/png,image/jpeg,image/jpg,image/webp"
-  localFileInput.addEventListener("change", () => {
-    void processLocalFilesForWatermarkRemoval(localFileInput.files, setStatus).finally(() => {
-      localFileInput.value = ""
-    })
-  })
-  root.append(localFileInput)
-
   createButton("导出聊天 Markdown（高保真）", async () => {
     const messages = extractChatMessages()
     if (messages.length === 0) {
@@ -962,41 +1109,10 @@ const ensurePanel = () => {
     window.open(gmailUrl, "_blank", "noopener,noreferrer")
   })
 
-  createButton("下载聊天图片（原图）", async () => {
-    const urls = collectGeminiImageUrls()
+  createButton("下载图片", async () => {
+    const urls = collectGeminiOriginalImageUrls()
     if (urls.length === 0) {
-      setStatus("未找到可下载的聊天图片", true)
-      return
-    }
-
-    const items = createDownloadItems(urls)
-    try {
-      const response = (await browser.runtime.sendMessage({
-        type: DOWNLOAD_IMAGES_MESSAGE,
-        items,
-      })) as DownloadImagesResponse | undefined
-
-      if (!response?.ok) {
-        setStatus("图片下载失败，请重试", true)
-        return
-      }
-
-      if (response.errors.length > 0) {
-        setStatus(`下载完成 ${response.downloaded}/${items.length} 张，部分失败`, true)
-        return
-      }
-
-      setStatus(`已提交 ${response.downloaded} 张图片下载`)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      setStatus(`图片下载失败: ${message}`, true)
-    }
-  })
-
-  createButton("下载聊天图片（去水印）", async () => {
-    const urls = collectGeminiImageUrls()
-    if (urls.length === 0) {
-      setStatus("未找到可处理的聊天图片", true)
+      setStatus("未找到可下载的 Gemini 图片", true)
       return
     }
 
@@ -1011,34 +1127,6 @@ const ensurePanel = () => {
     await downloadWatermarkFreeChatImages(urls, setStatus)
   })
 
-  createButton("本地图片批量去水印", async () => {
-    try {
-      await ensureWatermarkAssetsLoaded()
-      localFileInput.click()
-      setStatus("请选择本地图片（支持多选）")
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      setStatus(`去水印模板加载失败: ${message}`, true)
-    }
-  })
-
-  const toggleWrap = document.createElement("label")
-  toggleWrap.className = "eac-toggle"
-  const toggle = document.createElement("input")
-  toggle.type = "checkbox"
-  toggle.addEventListener("change", () => {
-    document.documentElement.classList.toggle(VISUAL_CLEAN_CLASS, toggle.checked)
-    if (toggle.checked) {
-      setStatus("已启用去可见水印（仅隐藏页面叠加标识）")
-      return
-    }
-    setStatus("已关闭去可见水印")
-  })
-  const toggleText = document.createElement("span")
-  toggleText.textContent = "去可见水印（UI）"
-  toggleWrap.append(toggle, toggleText)
-  root.append(toggleWrap)
-
   root.append(status)
   document.documentElement.append(root)
 }
@@ -1050,5 +1138,6 @@ export default defineContentScript({
     if (window.top !== window.self) return
     ensureStyle()
     ensurePanel()
+    void startAutoWatermarkRemover()
   },
 })
