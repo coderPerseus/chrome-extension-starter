@@ -11,7 +11,8 @@
   --surface: rgba(255, 255, 255, 0.92);
   --surface-border: rgba(148, 163, 184, 0.45);
   --glow: rgba(13, 148, 136, 0.28);
-  --font-sans: "SF Pro Text", "SF Pro Display", "Avenir Next", "Avenir", "Trebuchet MS", "Segoe UI", sans-serif;
+  --font-sans: "SF Pro Text", "SF Pro Display", "Avenir Next", "Avenir", "Trebuchet MS", "Segoe UI",
+    sans-serif;
   --font-display: "Fraunces", "Times New Roman", serif;
 }
 
@@ -26,10 +27,16 @@
     min-height: 100vh;
     font-family: var(--font-sans);
     color: var(--ink);
-    background:
-      radial-gradient(120% 140% at 10% 0%, rgba(13, 148, 136, 0.18) 0%, rgba(13, 148, 136, 0) 55%),
-      radial-gradient(120% 140% at 100% 0%, rgba(244, 244, 245, 0.85) 0%, rgba(244, 244, 245, 0) 62%),
-      linear-gradient(150deg, #f8fafc 0%, #f1f5f9 45%, #fefce8 100%);
+    background: radial-gradient(
+        120% 140% at 10% 0%,
+        rgba(13, 148, 136, 0.18) 0%,
+        rgba(13, 148, 136, 0) 55%
+      ),
+      radial-gradient(
+        120% 140% at 100% 0%,
+        rgba(244, 244, 245, 0.85) 0%,
+        rgba(244, 244, 245, 0) 62%
+      ), linear-gradient(150deg, #f8fafc 0%, #f1f5f9 45%, #fefce8 100%);
   }
 }
 
@@ -54,9 +61,11 @@
 
 [data-theme="dark"] body {
   color: var(--ink);
-  background:
-    radial-gradient(120% 140% at 15% 0%, rgba(45, 212, 191, 0.18) 0%, rgba(45, 212, 191, 0) 60%),
-    radial-gradient(120% 140% at 100% 0%, rgba(59, 130, 246, 0.18) 0%, rgba(59, 130, 246, 0) 55%),
+  background: radial-gradient(
+      120% 140% at 15% 0%,
+      rgba(45, 212, 191, 0.18) 0%,
+      rgba(45, 212, 191, 0) 60%
+    ), radial-gradient(120% 140% at 100% 0%, rgba(59, 130, 246, 0.18) 0%, rgba(59, 130, 246, 0) 55%),
     linear-gradient(160deg, #0b1120 0%, #0f172a 60%, #020617 100%);
 }
 
@@ -109,9 +118,6 @@
   gap: 12px;
 }
 
-.brand {
-}
-
 .brand-icon {
   width: 44px;
   height: 44px;
@@ -120,27 +126,6 @@
   background: var(--surface);
   object-fit: contain;
   box-shadow: 0 8px 16px rgba(15, 23, 42, 0.12);
-}
-
-.brand-text {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.brand-kicker {
-  text-transform: uppercase;
-  letter-spacing: 0.28em;
-  font-size: 10px;
-  color: var(--ink-soft);
-}
-
-.brand-title {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: 20px;
-  letter-spacing: 0.02em;
-  color: var(--ink);
 }
 
 .theme-switch {

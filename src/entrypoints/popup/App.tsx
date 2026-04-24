@@ -1,42 +1,31 @@
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, ConfigProvider, Switch, theme } from "antd";
-import { getOrpc } from "@/shared/orpc/query";
-import logoUrl from "@/assets/logo.png";
+import { useEffect, useState } from "react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Button, ConfigProvider, Switch, theme } from "antd"
+import { getOrpc } from "@/shared/orpc/query"
+import logoUrl from "@/assets/logo.png"
 
 const formatError = (error: unknown) => {
-  if (error instanceof Error) return error.message;
-  return String(error);
-};
+  if (error instanceof Error) return error.message
+  return String(error)
+}
 
 function App() {
-  const orpc = getOrpc();
-  const queryClient = useQueryClient();
-  const counterQuery = useQuery(orpc.counter.get.queryOptions());
-  const [isDark, setIsDark] = useState(false);
+  const orpc = getOrpc()
+  const queryClient = useQueryClient()
+  const counterQuery = useQuery(orpc.counter.get.queryOptions())
+  const [isDark, setIsDark] = useState(false)
   const incrementMutation = useMutation(
     orpc.counter.increment.mutationOptions({
       onSuccess: (value) => {
-        queryClient.setQueryData(orpc.counter.get.queryKey(), value);
+        queryClient.setQueryData(orpc.counter.get.queryKey(), value)
       },
-    }),
-  );
-  const counterError = counterQuery.isError
-    ? formatError(counterQuery.error)
-    : null;
-  const appName = useMemo(() => {
-    const globals = globalThis as typeof globalThis & {
-      browser?: { i18n?: { getMessage?: (key: string) => string } };
-      chrome?: { i18n?: { getMessage?: (key: string) => string } };
-    };
-    const browserMessage = globals.browser?.i18n?.getMessage?.("appName") ?? "";
-    const chromeMessage = globals.chrome?.i18n?.getMessage?.("appName") ?? "";
-    return browserMessage || chromeMessage || "chrome-extension-starter";
-  }, []);
+    })
+  )
+  const counterError = counterQuery.isError ? formatError(counterQuery.error) : null
 
   useEffect(() => {
-    document.documentElement.dataset.theme = isDark ? "dark" : "light";
-  }, [isDark]);
+    document.documentElement.dataset.theme = isDark ? "dark" : "light"
+  }, [isDark])
 
   return (
     <ConfigProvider
@@ -59,11 +48,7 @@ function App() {
           </div>
           <div className="theme-switch">
             <span>{isDark ? "Dark" : "Light"}</span>
-            <Switch
-              checked={isDark}
-              onChange={(checked) => setIsDark(checked)}
-              size="small"
-            />
+            <Switch checked={isDark} onChange={(checked) => setIsDark(checked)} size="small" />
           </div>
         </header>
 
@@ -74,12 +59,8 @@ function App() {
               <span className="status-dot" /> Live
             </span>
           </div>
-          <div className="counter-value">
-            {counterError ? "--" : (counterQuery.data ?? "...")}
-          </div>
-          {counterError ? (
-            <p className="error-text">加载失败: {counterError}</p>
-          ) : null}
+          <div className="counter-value">{counterError ? "--" : (counterQuery.data ?? "...")}</div>
+          {counterError ? <p className="error-text">加载失败: {counterError}</p> : null}
           <Button
             type="primary"
             size="large"
@@ -90,9 +71,7 @@ function App() {
             Increment
           </Button>
           {incrementMutation.isError ? (
-            <p className="error-text">
-              Increment failed: {formatError(incrementMutation.error)}
-            </p>
+            <p className="error-text">Increment failed: {formatError(incrementMutation.error)}</p>
           ) : null}
         </main>
 
@@ -109,7 +88,7 @@ function App() {
         </footer>
       </div>
     </ConfigProvider>
-  );
+  )
 }
 
-export default App;
+export default App
